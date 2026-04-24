@@ -1,0 +1,1183 @@
+openapi: 3.0.3
+info:
+  title: Sistema de Gestión de Citas y Agendamiento de Pacientes - API
+  description: |
+    API REST para el Sistema de Gestión de Citas y Agendamiento de Pacientes de un centro de salud.
+
+    Generado automáticamente desde los requerimientos funcionales del documento
+    `Source-Actividad-Practica1.md` usando el skill definido en `skill/skill-definition.md`.
+
+    **Actores del sistema:**
+    - Paciente
+    - Tratante (médico)
+    - Recepcionista
+    - Administrador
+
+    **Reglas de negocio aplicadas:**
+    - RN1: Una cita solo puede estar en un estado a la vez
+    - RN2: Un tratante no puede tener dos pacientes al mismo tiempo
+    - RN3: Un paciente no puede registrarse como usuario dos veces
+    - RN4: Un paciente puede reprogramar una cita un máximo de 5 veces
+    - RN5: La ficha de un paciente solo puede ser consultada por el médico tratante
+    - RN6: La ficha del paciente es personal, privada y no puede ser pública
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Servidor de desarrollo
+
+tags:
+  - name: auth
+    description: Autenticación y autorización (RNF1)
+  - name: patients
+    description: Gestión de pacientes (CU6, RN3, RN5, RN6)
+  - name: appointments
+    description: Gestión de citas (CU1, CU2, CU3, CU4, CU7, CU8, RN1, RN2, RN4)
+  - name: availability
+    description: Disponibilidad y agenda del tratante (CU10, CU11, CU12)
+  - name: notifications
+    description: Notificaciones y recordatorios automáticos (CU5, CU13, CU14)
+  - name: waitlist
+    description: Lista de espera y sobrecupos (CU9)
+
+paths:
+
+  # ─────────────────────────────
+  # AUTH
+  # ─────────────────────────────
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Iniciar sesión
+      description: Autentica un usuario y retorna un token JWT. Aplica RNF1 (autenticación).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: recepcion@clinica.cl
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Login exitoso. Retorna token y datos del usuario.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Cerrar sesión
+      description: Invalida el token JWT del usuario. Aplica RNF2 (auditoría).
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Sesión cerrada exitosamente.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ─────────────────────────────
+  # PATIENTS
+  # ─────────────────────────────
+
+  /patients:
+    post:
+      tags: [patients]
+      summary: Registrar nuevo paciente (CU6)
+      description: |
+        Registra un nuevo paciente en el sistema.
+
+        **RN3:** Un paciente no puede registrarse como usuario dos veces en el sistema.
+        Si ya existe un paciente con el mismo RUT, se retorna 409 Conflict.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientCreate'
+      responses:
+        '201':
+          description: Paciente registrado exitosamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '409':
+          description: El paciente ya existe en el sistema (RN3 – RUT duplicado).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags: [patients]
+      summary: Listar pacientes
+      description: Retorna la lista paginada de pacientes registrados. Solo accesible para Recepcionista y Administrador.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: query
+          description: Filtrar por nombre (búsqueda parcial)
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Lista paginada de pacientes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total, page]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Patient'
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /patients/{patientId}:
+    parameters:
+      - $ref: '#/components/parameters/patientId'
+    get:
+      tags: [patients]
+      summary: Obtener ficha del paciente (RN5, RN6)
+      description: |
+        Retorna la ficha completa del paciente.
+
+        **RN5:** La ficha de un paciente solo puede ser consultada por el médico tratante.
+        **RN6:** La ficha del paciente es personal, privada y no puede ser pública.
+
+        Si el usuario autenticado no es el médico tratante del paciente, se retorna 403 Forbidden.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ficha del paciente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [patients]
+      summary: Actualizar datos del paciente
+      description: Actualiza los datos personales del paciente. Solo Recepcionista o Administrador.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientUpdate'
+      responses:
+        '200':
+          description: Paciente actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─────────────────────────────
+  # APPOINTMENTS
+  # ─────────────────────────────
+
+  /appointments:
+    post:
+      tags: [appointments]
+      summary: Agendar hora médica (CU1)
+      description: |
+        Solicita y agenda una hora médica para un paciente.
+
+        **RN1:** La cita se crea en estado `pendiente` (solo puede estar en un estado a la vez).
+        **RN2:** Valida que el tratante no tenga otro paciente agendado en la misma franja horaria.
+
+        **Criterios de aceptación:**
+        - CA1: Si la hora ya está reservada, retorna 409 e indica que no está disponible.
+        - CA2: La cita queda en estado `pendiente` y programa recordatorios T-24h y T-2h.
+        - CA3: La agenda del profesional se actualiza en tiempo real.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppointmentCreate'
+      responses:
+        '201':
+          description: Cita agendada exitosamente. Estado inicial `pendiente` (CA2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '409':
+          description: Horario no disponible – tratante ya tiene una cita a esa hora (RN2, CA1).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags: [appointments]
+      summary: Listar citas
+      description: Retorna la lista de citas filtradas por parámetros. Soporta filtros por médico, paciente, estado y fecha.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: doctorId
+          in: query
+          description: Filtrar por ID del tratante
+          schema:
+            type: string
+            format: uuid
+        - name: patientId
+          in: query
+          description: Filtrar por ID del paciente
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filtrar por estado de la cita
+          schema:
+            $ref: '#/components/schemas/AppointmentStatus'
+        - name: date
+          in: query
+          description: Filtrar por fecha (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Lista de citas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /appointments/{appointmentId}:
+    parameters:
+      - $ref: '#/components/parameters/appointmentId'
+    get:
+      tags: [appointments]
+      summary: Obtener detalle de una cita
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Detalle de la cita.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [appointments]
+      summary: Reprogramar o reagendar cita (CU3, CU8)
+      description: |
+        Permite cambiar la fecha y hora de una cita existente.
+
+        **RN4:** Un paciente puede reprogramar una cita un máximo de 5 veces.
+        Si se supera el límite, retorna 422 Unprocessable Entity.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppointmentReschedule'
+      responses:
+        '200':
+          description: Cita reprogramada exitosamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '409':
+          description: La nueva hora no está disponible (RN2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Límite de reprogramaciones alcanzado – máximo 5 veces (RN4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [appointments]
+      summary: Cancelar cita
+      description: |
+        Cancela una cita existente. Cambia el estado a `cancelada`.
+        **RN1:** La cita pasa exclusivamente al estado `cancelada`.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cita cancelada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /appointments/{appointmentId}/confirm:
+    parameters:
+      - $ref: '#/components/parameters/appointmentId'
+    post:
+      tags: [appointments]
+      summary: Confirmar asistencia a cita – check-in (CU2, CU7)
+      description: |
+        Confirma la asistencia a una cita. Cambia el estado de `pendiente` a `confirmada`.
+
+        **RN1:** La cita pasa exclusivamente al estado `confirmada`.
+
+        **Criterios de aceptación (CA1 de CU7):**
+        - Given: existe una cita en estado `pendiente`
+        - When: recepción realiza el check-in
+        - Then: el sistema cambia el estado a `confirmada` y registra timestamp y usuario responsable.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cita confirmada. Registra timestamp y usuario (CA1 CU7).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '409':
+          description: La cita no está en estado `pendiente` y no puede confirmarse.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /appointments/{appointmentId}/no-show:
+    parameters:
+      - $ref: '#/components/parameters/appointmentId'
+    post:
+      tags: [appointments]
+      summary: Marcar cita como no-show (CA2 de CU7)
+      description: |
+        Marca una cita como no-show cuando el paciente no asistió.
+
+        **Criterio de aceptación (CA2 de CU7):**
+        - Given: una cita ya superó su hora programada por más de 24 horas
+        - When: no existe registro de check-in
+        - Then: el sistema debe sugerir (o confirmar) marcar la cita como `no-show`.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cita marcada como no-show.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '409':
+          description: La cita no puede marcarse como no-show en su estado actual.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─────────────────────────────
+  # DOCTOR AVAILABILITY & AGENDA
+  # ─────────────────────────────
+
+  /doctors/{doctorId}/availability:
+    parameters:
+      - $ref: '#/components/parameters/doctorId'
+    get:
+      tags: [availability]
+      summary: Obtener disponibilidad del tratante (CU12)
+      description: Retorna los slots de disponibilidad del tratante para un rango de fechas.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: date
+          in: query
+          description: Fecha específica (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: from
+          in: query
+          description: Fecha inicio del rango
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: Fecha fin del rango
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Lista de slots de disponibilidad.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AvailabilitySlot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [availability]
+      summary: Configurar horas disponibles (CU10)
+      description: Registra un nuevo slot de disponibilidad para el tratante. Horario laboral 09:00-17:00, lunes a viernes.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvailabilitySlotCreate'
+      responses:
+        '201':
+          description: Slot de disponibilidad creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilitySlot'
+        '409':
+          description: Ya existe un slot en ese horario (RN2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /doctors/{doctorId}/availability/{slotId}:
+    parameters:
+      - $ref: '#/components/parameters/doctorId'
+      - name: slotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [availability]
+      summary: Eliminar slot de disponibilidad
+      description: Elimina un slot de disponibilidad que no tiene citas asociadas.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Slot eliminado exitosamente.
+        '409':
+          description: No se puede eliminar el slot porque tiene citas asociadas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /doctors/{doctorId}/modality:
+    parameters:
+      - $ref: '#/components/parameters/doctorId'
+    put:
+      tags: [availability]
+      summary: Configurar modalidad de atención (CU11)
+      description: Configura si el tratante atiende de forma presencial, online o ambas modalidades.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modality]
+              properties:
+                modality:
+                  type: string
+                  enum: [presencial, online, ambas]
+                  description: Modalidad de atención del tratante.
+      responses:
+        '200':
+          description: Modalidad actualizada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  doctorId:
+                    type: string
+                    format: uuid
+                  modality:
+                    type: string
+                    enum: [presencial, online, ambas]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /doctors/{doctorId}/agenda:
+    parameters:
+      - $ref: '#/components/parameters/doctorId'
+    get:
+      tags: [availability]
+      summary: Ver agenda del tratante (CU12)
+      description: |
+        Retorna la agenda completa del tratante para una fecha dada, incluyendo
+        citas agendadas y slots disponibles. Actualizada en tiempo real (CA3 de CU1).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: date
+          in: query
+          required: true
+          description: Fecha a consultar (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Agenda del tratante para la fecha solicitada.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─────────────────────────────
+  # NOTIFICATIONS & REMINDERS
+  # ─────────────────────────────
+
+  /notifications:
+    get:
+      tags: [notifications]
+      summary: Obtener notificaciones del usuario (CU5, CU13)
+      description: |
+        Retorna las notificaciones del usuario autenticado.
+        - Paciente: notificaciones de sus citas (CU5)
+        - Tratante: notificaciones de cambios en su agenda (CU13)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: unread
+          in: query
+          description: Si es true, retorna solo las no leídas.
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Lista de notificaciones.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /reminders:
+    post:
+      tags: [notifications]
+      summary: Crear recordatorio automático (CU14)
+      description: |
+        Endpoint del sistema para programar recordatorios automáticos de una cita.
+
+        **Criterios de aceptación (CU14):**
+        - CA1: Genera recordatorio a T-24h y T-2h antes de la cita.
+        - CA2: Si falla el canal de envío, registra log de error visible para Recepción.
+        - CA3: Si el paciente confirma desde la notificación, registra la confirmación de forma inmediata.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReminderCreate'
+      responses:
+        '201':
+          description: Recordatorio programado exitosamente (CA1).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reminder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /reminders/{reminderId}/confirm:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [notifications]
+      summary: Confirmar asistencia desde recordatorio (CA3 de CU14)
+      description: |
+        El paciente confirma su asistencia directamente desde la notificación de recordatorio.
+
+        **CA3 de CU14:** el sistema registra la confirmación de asistencia de forma inmediata.
+      responses:
+        '200':
+          description: Asistencia confirmada y registrada inmediatamente (CA3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─────────────────────────────
+  # WAITLIST
+  # ─────────────────────────────
+
+  /waitlist:
+    get:
+      tags: [waitlist]
+      summary: Obtener lista de espera (CU9)
+      description: Retorna la lista de espera de pacientes para un tratante o especialidad.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: doctorId
+          in: query
+          description: Filtrar por ID del tratante
+          schema:
+            type: string
+            format: uuid
+        - name: specialty
+          in: query
+          description: Filtrar por especialidad
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lista de espera.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WaitlistEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [waitlist]
+      summary: Agregar paciente a lista de espera (CU9)
+      description: Agrega un paciente a la lista de espera para un tratante o especialidad.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WaitlistCreate'
+      responses:
+        '201':
+          description: Paciente agregado a la lista de espera.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitlistEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /waitlist/{entryId}:
+    parameters:
+      - name: entryId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [waitlist]
+      summary: Remover paciente de lista de espera
+      description: Elimina una entrada de la lista de espera (cuando se asigna cita o el paciente desiste).
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Entrada removida exitosamente.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# ─────────────────────────────
+# COMPONENTS
+# ─────────────────────────────
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token JWT obtenido en /auth/login. Aplica RNF1 (autenticación y autorización).
+
+  parameters:
+    patientId:
+      name: patientId
+      in: path
+      required: true
+      description: Identificador único del paciente.
+      schema:
+        type: string
+        format: uuid
+    appointmentId:
+      name: appointmentId
+      in: path
+      required: true
+      description: Identificador único de la cita.
+      schema:
+        type: string
+        format: uuid
+    doctorId:
+      name: doctorId
+      in: path
+      required: true
+      description: Identificador único del tratante.
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: No autenticado. Token JWT ausente o inválido (RNF1).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Sin permisos para realizar esta acción (RNF1, RN5, RN6).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Recurso no encontrado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: APPOINTMENT_CONFLICT
+        message:
+          type: string
+          example: El tratante ya tiene una cita en ese horario.
+
+    AuthToken:
+      type: object
+      required: [token, expiresAt, user]
+      properties:
+        token:
+          type: string
+          description: Token JWT para autenticación.
+        expiresAt:
+          type: string
+          format: date-time
+        user:
+          $ref: '#/components/schemas/UserSummary'
+
+    UserSummary:
+      type: object
+      required: [id, name, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        role:
+          type: string
+          enum: [paciente, tratante, recepcionista, administrador]
+
+    Patient:
+      type: object
+      required: [id, name, email, rut, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Juan Pérez
+        email:
+          type: string
+          format: email
+          example: juan.perez@email.com
+        rut:
+          type: string
+          description: RUT único del paciente. RN3 – no puede duplicarse.
+          example: 12345678-9
+        phone:
+          type: string
+          example: +56912345678
+        birthDate:
+          type: string
+          format: date
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PatientCreate:
+      type: object
+      required: [name, email, rut]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        rut:
+          type: string
+          description: RUT del paciente. RN3 – debe ser único en el sistema.
+        phone:
+          type: string
+        birthDate:
+          type: string
+          format: date
+
+    PatientUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+
+    AppointmentStatus:
+      type: string
+      enum: [pendiente, confirmada, cancelada, reprogramada, no-show, completada]
+      description: |
+        Estado de la cita. RN1: solo puede estar en un estado a la vez.
+        - pendiente: creada, sin confirmar asistencia
+        - confirmada: paciente confirmó o recepción realizó check-in
+        - cancelada: cita cancelada por paciente, recepcionista o tratante
+        - reprogramada: se cambió la fecha/hora (registra el historial)
+        - no-show: el paciente no asistió
+        - completada: atención finalizada
+
+    Appointment:
+      type: object
+      required: [id, patientId, doctorId, dateTime, status, rescheduleCount, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        dateTime:
+          type: string
+          format: date-time
+          description: Fecha y hora de la cita. Horario laboral 09:00-17:00, L-V.
+        status:
+          $ref: '#/components/schemas/AppointmentStatus'
+        modality:
+          type: string
+          enum: [presencial, online]
+          default: presencial
+        rescheduleCount:
+          type: integer
+          description: Número de veces que se ha reprogramado esta cita. RN4 – máximo 5.
+          minimum: 0
+          maximum: 5
+        confirmedAt:
+          type: string
+          format: date-time
+          description: Timestamp de la confirmación (CA1 de CU7).
+        confirmedBy:
+          type: string
+          format: uuid
+          description: ID del usuario que realizó el check-in (CA1 de CU7). RNF2 – auditoría.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    AppointmentCreate:
+      type: object
+      required: [patientId, doctorId, dateTime]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        dateTime:
+          type: string
+          format: date-time
+          description: Fecha y hora de la cita. Se validará disponibilidad del tratante (RN2).
+        modality:
+          type: string
+          enum: [presencial, online]
+          default: presencial
+
+    AppointmentReschedule:
+      type: object
+      required: [dateTime]
+      properties:
+        dateTime:
+          type: string
+          format: date-time
+          description: Nueva fecha y hora. RN4 – máximo 5 reprogramaciones por cita.
+        reason:
+          type: string
+          description: Motivo de la reprogramación.
+
+    AvailabilitySlot:
+      type: object
+      required: [id, doctorId, startTime, endTime, isBooked]
+      properties:
+        id:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        startTime:
+          type: string
+          format: date-time
+          description: Inicio del slot. Horario laboral 09:00-17:00, L-V.
+        endTime:
+          type: string
+          format: date-time
+        isBooked:
+          type: boolean
+          description: true si el slot ya tiene una cita asignada.
+
+    AvailabilitySlotCreate:
+      type: object
+      required: [startTime, endTime]
+      properties:
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+
+    Notification:
+      type: object
+      required: [id, userId, type, message, isRead, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [recordatorio, confirmacion, cancelacion, reagendamiento]
+        message:
+          type: string
+        isRead:
+          type: boolean
+        appointmentId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    ReminderCreate:
+      type: object
+      required: [appointmentId, triggerAt, type]
+      properties:
+        appointmentId:
+          type: string
+          format: uuid
+        triggerAt:
+          type: string
+          format: date-time
+          description: Momento en que debe dispararse el recordatorio (T-24h o T-2h).
+        type:
+          type: string
+          enum: [T-24h, T-2h]
+          description: Tipo de recordatorio según CU14.
+
+    Reminder:
+      type: object
+      required: [id, appointmentId, triggerAt, type, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        appointmentId:
+          type: string
+          format: uuid
+        triggerAt:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [T-24h, T-2h]
+        status:
+          type: string
+          enum: [pendiente, enviado, fallido]
+          description: Estado del recordatorio. CA2 – si falla, queda en estado 'fallido'.
+        errorLog:
+          type: string
+          description: Log de error visible para Recepción cuando falla el envío (CA2 de CU14).
+
+    WaitlistEntry:
+      type: object
+      required: [id, patientId, doctorId, requestedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        requestedAt:
+          type: string
+          format: date-time
+        specialty:
+          type: string
+          description: Especialidad médica solicitada.
+
+    WaitlistCreate:
+      type: object
+      required: [patientId, doctorId]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        specialty:
+          type: string
