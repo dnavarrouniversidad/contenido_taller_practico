@@ -1,16 +1,16 @@
 # MCP: Spec Runner
 
 Model Context Protocol (MCP) server que permite a un agente IA cargar, validar y verificar
-especificaciones OpenAPI generadas a partir de requerimientos funcionales.
+especificaciones **[OpenSpec](https://openspec.dev)** generadas a partir de requerimientos funcionales.
 
 ## Herramientas expuestas
 
 | Herramienta | Descripción |
 |---|---|
 | `load_requirements` | Lee y retorna el contenido de un documento de requerimientos Markdown |
-| `validate_openapi_spec` | Valida un spec OpenAPI 3.x contra el estándar (YAML o JSON) |
-| `list_acceptance_criteria` | Extrae y lista todos los criterios de aceptación Given/When/Then del documento de requerimientos |
-| `verify_spec_coverage` | Verifica que el spec OpenAPI cubra todos los casos de uso (CU) y reglas de negocio (RN) del documento de requerimientos |
+| `validate_openspec` | Valida que un `spec.md` (o todos los de `openspec/specs/`) cumplan el formato OpenSpec (Purpose + Requirements + Scenarios con GIVEN/WHEN/THEN) |
+| `list_acceptance_criteria` | Extrae y lista todos los escenarios GIVEN/WHEN/THEN de un documento de requerimientos o de un spec.md |
+| `verify_spec_coverage` | Verifica que los specs en `openspec/specs/` cubran todos los casos de uso (CU) y reglas de negocio (RN) del documento de requerimientos |
 
 ## Requisitos
 
@@ -39,24 +39,9 @@ El servidor MCP corre sobre **stdio** (estándar de MCP). Para conectarlo a un c
 }
 ```
 
-### Ejemplo con Claude Desktop
-
-En `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
-
-```json
-{
-  "mcpServers": {
-    "spec-runner": {
-      "command": "node",
-      "args": ["/ruta/al/repositorio/mcp/src/index.js"]
-    }
-  }
-}
-```
-
 ### Ejemplo con GitHub Copilot (VS Code)
 
-En `.vscode/mcp.json` dentro del workspace:
+En `.vscode/mcp.json` dentro del workspace (ya incluido):
 
 ```json
 {
@@ -75,7 +60,7 @@ En `.vscode/mcp.json` dentro del workspace:
 Una vez conectado el MCP, puedes pedirle al agente IA:
 
 ```
-Valida el spec en skill/output/appointments-api.yaml
+Valida todos los specs en openspec/specs/
 ```
 
 ```
@@ -83,7 +68,7 @@ Lista los criterios de aceptación de Source-Actividad-Practica1.md
 ```
 
 ```
-Verifica si el spec skill/output/appointments-api.yaml cubre todos los
+Verifica si los specs en openspec/specs/ cubren todos los
 casos de uso del documento Source-Actividad-Practica1.md
 ```
 
@@ -99,24 +84,32 @@ casos de uso del documento Source-Actividad-Practica1.md
 
 ---
 
-### `validate_openapi_spec`
+### `validate_openspec`
 
-**Input:**
+Valida que los archivos `spec.md` cumplan el formato OpenSpec:
+- `## Purpose` section obligatoria
+- Al menos un `### Requirement:` heading
+- Al menos un `#### Scenario:` con líneas `- GIVEN`, `- WHEN`, `- THEN`
+
+**Input (directorio):**
 ```json
-{ "specPath": "skill/output/appointments-api.yaml" }
+{ "specPath": "openspec/specs" }
 ```
-**Output (éxito):**
+**Output:**
 ```
-✅ Spec válida: Sistema de Gestión de Citas v1.0.0
-   OpenAPI: 3.0.3
-   Endpoints (paths): 18
-   Schemas: 15
-   Tags: auth, patients, appointments, availability, notifications, waitlist
+📋 OpenSpec validation — 6 spec(s) checked
+✅ Valid: 6   ❌ Invalid: 0
+
+✅ openspec/specs/auth/spec.md
+   Requirements: 4  Scenarios: 5
+✅ openspec/specs/appointments/spec.md
+   Requirements: 6  Scenarios: 12
+...
 ```
-**Output (error):**
-```
-❌ Spec inválida:
-Semantic error at paths./patients.post.responses.201: ...
+
+**Input (archivo individual):**
+```json
+{ "specPath": "openspec/specs/appointments/spec.md" }
 ```
 
 ---
@@ -129,14 +122,22 @@ Semantic error at paths./patients.post.responses.201: ...
 ```
 **Output:**
 ```
-CU1: Solicitar o agendar hora (Must):
-    CA1:
+CU1: Solicitar o agendar hora (Must) › CA1:
       Given: que el recepcionista selecciona un profesional y una fecha
       When:  intenta elegir una franja horaria ya reservada
-      Then:  el sistema debe bloquear la selección e indicar que la hora no está disponible
-    CA2:
-      Given: que existe una hora disponible seleccionada
-      ...
+      Then:  el sistema debe bloquear la selección...
+```
+
+También funciona con spec.md de OpenSpec:
+```json
+{ "filePath": "openspec/specs/appointments/spec.md" }
+```
+**Output:**
+```
+Appointment Scheduling › Successful appointment creation:
+      - GIVEN a receptionist selects a physician and an available time slot
+      - WHEN the receptionist confirms the appointment
+      - THEN the appointment is created in `pendiente` state
 ```
 
 ---
@@ -146,27 +147,27 @@ CU1: Solicitar o agendar hora (Must):
 **Input:**
 ```json
 {
-  "specPath": "skill/output/appointments-api.yaml",
+  "specsDir": "openspec/specs",
   "requirementsPath": "Source-Actividad-Practica1.md"
 }
 ```
 **Output:**
 ```
 📋 Casos de uso en requerimientos: 14
-✅ Cubiertos por el spec: 14
+✅ Cubiertos por los specs: 14
 ❌ Sin cobertura detectada: 0
 
-── Detalle ───────────────────────
+── Detalle de casos de uso ─────────────────────
 ✅ CU1: Solicitar o agendar hora
 ✅ CU2: Confirmar hora
 ...
 
-📌 Reglas de negocio encontradas: 6
-  RN1: Una cita solo puede estar en un estado a la vez
-  ...
+📌 Reglas de negocio: 6
+✅ RN1: Una cita solo puede estar en un estado a la vez
+...
 
-🛣  Endpoints en el spec: 18
-  /auth/login
-  /auth/logout
+📂 Spec files analizados: 6
+  openspec/specs/auth/spec.md
+  openspec/specs/appointments/spec.md
   ...
 ```

@@ -1,7 +1,7 @@
 {
   "name": "spec-runner-mcp",
   "version": "1.0.0",
-  "description": "MCP server to validate and verify OpenAPI specs generated from functional requirements",
+  "description": "MCP server to validate and verify OpenSpec specs generated from functional requirements",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -9,7 +9,6 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "@apidevtools/swagger-parser": "^10.1.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "js-yaml": "^4.1.0"
   }

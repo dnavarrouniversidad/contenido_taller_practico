@@ -1,19 +1,19 @@
-# Skill Definition: Requirements to OpenAPI Spec
+# Skill Definition: Requirements to OpenSpec
 
 ## Descripción
 
 Este skill toma un documento de requerimientos funcionales en formato Markdown y genera
-una especificación OpenAPI 3.0 completa que cubre todos los casos de uso, reglas de negocio
-y criterios de aceptación identificados.
+especificaciones en formato **[OpenSpec](https://openspec.dev)** (`@fission-ai/openspec`),
+organizadas por dominio funcional en la carpeta `openspec/specs/`.
 
 ---
 
 ## Prompt del Skill
 
 ```
-Eres un arquitecto de software especializado en diseño de APIs REST.
-Tu tarea es leer el documento de requerimientos funcionales y generar
-una especificación OpenAPI 3.0 completa.
+Eres un arquitecto de software especializado en diseño de sistemas y especificación de requerimientos.
+Tu tarea es leer el documento de requerimientos funcionales y generar especificaciones en formato
+OpenSpec (https://openspec.dev), siguiendo la estructura de specs por dominio.
 
 ### Instrucciones paso a paso:
 
@@ -22,76 +22,63 @@ una especificación OpenAPI 3.0 completa.
 2. **Identifica y extrae** los siguientes elementos:
    - Actores (usuarios del sistema)
    - Casos de Uso (CU1, CU2, ...) con su descripción y actor responsable
-   - Reglas de Negocio (RN1, RN2, ...) con restricciones a reflejar en el spec
-   - Requerimientos No Funcionales (RNF) relevantes para el API
-   - Criterios de Aceptación (CA) por caso de uso en formato Given/When/Then
+   - Reglas de Negocio (RN1, RN2, ...) con restricciones
+   - Requerimientos No Funcionales (RNF) relevantes
+   - Criterios de Aceptación (CA) en formato Given/When/Then por caso de uso
 
-3. **Mapea cada Caso de Uso a uno o más endpoints REST**:
-   - Usa sustantivos en plural para los recursos (ej: /patients, /appointments)
-   - Usa verbos HTTP correctamente:
-     - GET: consultar / listar
-     - POST: crear / ejecutar acción
-     - PUT: actualizar completamente
-     - PATCH: actualizar parcialmente
-     - DELETE: eliminar / cancelar
-   - Para acciones que no son CRUD puro, usa sub-recursos (ej: POST /appointments/{id}/confirm)
+3. **Agrupa por dominio funcional**:
+   - Crea un archivo `spec.md` por cada dominio lógico (auth, patients, appointments, availability, notifications, waitlist)
+   - Cada archivo va en `openspec/specs/<domain>/spec.md`
+   - Los dominios deben reflejar los agrupamientos naturales de los casos de uso
 
-4. **Incorpora las Reglas de Negocio** como:
-   - Códigos de respuesta HTTP específicos (409 para conflictos, 422 para validaciones de negocio)
-   - Campos con restricciones (`maximum`, `minimum`, `enum`, `pattern`)
-   - Descripciones en los endpoints que citen la regla de negocio (ej: "RN2: ...")
+4. **Formato obligatorio de cada `spec.md`**:
 
-5. **Modela los esquemas de datos** (components/schemas):
-   - Un esquema para crear (ej: AppointmentCreate)
-   - Un esquema para leer (ej: Appointment con id, timestamps)
-   - Un esquema de Error estándar con `code` y `message`
-   - Usa `format: uuid` para identificadores
-   - Usa `format: date-time` para fechas con hora
-   - Usa `format: date` para fechas sin hora
-   - Usa `enum` para estados y valores acotados
+   ```markdown
+   # <Domain> Specification
 
-6. **Define autenticación**:
-   - Usa `bearerAuth` (JWT) como securityScheme
-   - Aplica `security: [bearerAuth: []]` a todos los endpoints protegidos
+   ## Purpose
+   <Descripción de alto nivel del dominio, referencias a CU/RN/RNF que aplican>
 
-7. **Organiza con tags**:
-   - Un tag por dominio funcional (ej: patients, appointments, availability, notifications, waitlist)
+   ## Requirements
 
-8. **Documenta criterios de aceptación**:
-   - Incluye las precondiciones (Given) y resultados esperados (Then) en la descripción del endpoint
-   - Referencia los CA en las respuestas (ej: respuesta 201 corresponde a CA2 de CU1)
+   ### Requirement: <Nombre del requerimiento>
+   The system MUST/SHALL/SHOULD <comportamiento esperado>.
+   <Referencia al CU o RN que lo origina, ej: "Applies to CU1, RN2.">
 
-### Formato de salida requerido:
+   #### Scenario: <Nombre del escenario>
+   - GIVEN <precondición>
+   - WHEN <acción del usuario o del sistema>
+   - THEN <resultado esperado>
+   - AND <resultado adicional opcional>
+   ```
 
-Genera el spec completo en formato YAML válido con la siguiente estructura raíz:
+   **Reglas de formato:**
+   - `## Purpose` es obligatorio en cada spec
+   - Usa `### Requirement: <nombre>` para cada requerimiento
+   - Usa `#### Scenario: <nombre>` para cada escenario
+   - Usa RFC 2119 keywords: **MUST** (obligatorio), **SHALL** (obligatorio con matiz formal), **SHOULD** (recomendado), **MAY** (opcional)
+   - Incluye al menos un escenario por requerimiento (happy path)
+   - Incluye escenarios de error o borde cuando el requerimiento lo implique
+   - Referencia explícitamente los CU, RN y RNF de origen en el texto
 
-```yaml
-openapi: 3.0.3
-info:
-  title: ...
-  description: ...
-  version: 1.0.0
-servers:
-  - url: ...
-tags: [...]
-paths:
-  /resource:
-    post: ...
-    get: ...
-components:
-  securitySchemes: ...
-  parameters: ...
-  responses: ...
-  schemas: ...
-```
+5. **Cubre todos los casos de uso y reglas de negocio**:
+   - Cada CU del documento debe mapearse a al menos un `### Requirement:`
+   - Cada RN del documento debe citarse en el texto del requerimiento o scenario que lo implementa
+   - Los RNF de seguridad, rendimiento y disponibilidad deben mencionarse en los dominios relevantes
 
-### Reglas de calidad del spec generado:
+6. **Crea o actualiza el cambio en OpenSpec**:
+   - Crea la carpeta `openspec/changes/system-initialization/` con:
+     - `proposal.md` — qué se está especificando y por qué
+     - `design.md` — decisiones de arquitectura y diseño
+     - `tasks.md` — lista de tareas de implementación en formato checklist
 
-- Todos los endpoints deben tener `summary` y `description`
-- Los esquemas de request body deben tener `required` con los campos obligatorios
-- Los schemas de respuesta exitosa deben estar definidos en `components/schemas`
-- Los errores deben usar las responses compartidas en `components/responses`
-- Las referencias a reglas y casos de uso deben estar en las descripciones
+### Reglas de calidad del output:
+
+- Cada `spec.md` debe tener `## Purpose` y al menos un `### Requirement:`
+- Cada `### Requirement:` debe tener al menos un `#### Scenario:` con GIVEN/WHEN/THEN
+- Los escenarios deben ser concretos y verificables (se podrían convertir en tests automatizados)
+- No incluir detalles de implementación interna (nombres de clases, librerías, queries SQL)
+- Las referencias a CU/RN/RNF deben estar presentes en el texto
 ```
 
 ---
@@ -102,16 +89,38 @@ El skill consume el archivo `Source-Actividad-Practica1.md` en la raíz del repo
 
 ## Resultado generado
 
-Ver `skill/output/appointments-api.yaml`
+Los specs generados se encuentran en:
+
+```
+openspec/
+├── specs/
+│   ├── auth/spec.md
+│   ├── patients/spec.md
+│   ├── appointments/spec.md
+│   ├── availability/spec.md
+│   ├── notifications/spec.md
+│   └── waitlist/spec.md
+└── changes/
+    └── system-initialization/
+        ├── proposal.md
+        ├── design.md
+        └── tasks.md
+```
 
 ---
 
-## Cómo regenerar el spec
+## Cómo regenerar los specs
 
 En GitHub Copilot Chat (modo agente), ejecuta:
 
 ```
 Usando el skill definido en skill/skill-definition.md,
 lee el documento Source-Actividad-Practica1.md y
-regenera el spec en skill/output/appointments-api.yaml
+regenera los specs en openspec/specs/ en formato OpenSpec.
+```
+
+O usando los slash commands de OpenSpec directamente:
+
+```
+/opsx:propose system-initialization
 ```
