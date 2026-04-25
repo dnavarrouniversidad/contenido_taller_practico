@@ -70,8 +70,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'verify_spec_coverage',
       description:
-        'Checks whether the OpenSpec specs in openspec/specs/ cover all use cases (CU) and ' +
-        'business rules (RN) found in a requirements document. ' +
+        'Checks whether the OpenSpec specs in openspec/specs/ cover all requirements found in a ' +
+        'document. Works with any labeled requirement format (CU, US, REQ, FR, etc.) and ' +
+        'categorizes items as functional requirements, business rules, and NFRs. ' +
         'Returns covered and uncovered items.',
       inputSchema: {
         type: 'object',
@@ -87,6 +88,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ['specsDir', 'requirementsPath'],
+      },
+    },
+    {
+      name: 'detect_gaps',
+      description:
+        'Analyzes a requirements or design document to identify gaps: unanswered questions, ' +
+        'requirements without acceptance criteria, ambiguous terms, TODO/TBD markers, ' +
+        'and missing standard sections (Actors, Use Cases, Business Rules, NFRs, Acceptance Criteria). ' +
+        'Works with any Markdown requirements document regardless of labeling convention.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filePath: {
+            type: 'string',
+            description: 'Absolute or relative path to the requirements or design Markdown file.',
+          },
+        },
+        required: ['filePath'],
+      },
+    },
+    {
+      name: 'suggest_clarifications',
+      description:
+        'Generates specific, actionable clarification questions for a requirements or design document, ' +
+        'targeting each detected gap, ambiguous definition, and missing information item. ' +
+        'Use this to guide the author in completing and improving the specification. ' +
+        'Works with any Markdown requirements document.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filePath: {
+            type: 'string',
+            description: 'Absolute or relative path to the requirements or design Markdown file.',
+          },
+        },
+        required: ['filePath'],
       },
     },
   ],
@@ -178,27 +215,139 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const requirements = fs.readFileSync(reqPath, 'utf-8');
       const coverage = checkCoverage(allSpecsText, requirements, specFiles);
 
-      const lines = [
-        `📋 Casos de uso en requerimientos: ${coverage.useCases.length}`,
+      const outputLines = [
+        `📋 Requerimientos funcionales encontrados: ${coverage.funcRequirements.length}`,
         `✅ Cubiertos por los specs: ${coverage.covered.length}`,
         `❌ Sin cobertura detectada: ${coverage.missing.length}`,
         '',
-        '── Detalle de casos de uso ─────────────────────',
-        ...coverage.useCases.map((uc) => {
-          const isCovered = coverage.covered.includes(uc.id);
-          return `${isCovered ? '✅' : '❌'} ${uc.id}: ${uc.description}`;
+        '── Requerimientos funcionales ──────────────────────',
+        ...coverage.funcRequirements.map((item) => {
+          const isCovered = coverage.covered.includes(item.id);
+          return `${isCovered ? '✅' : '❌'} ${item.id}: ${item.description}`;
         }),
-        '',
-        `📌 Reglas de negocio: ${coverage.businessRules.length}`,
-        ...coverage.businessRules.map((rn) => {
-          const isCovered = allSpecsText.includes(rn.id.toLowerCase());
-          return `${isCovered ? '✅' : '❌'} ${rn.id}: ${rn.description}`;
-        }),
-        '',
-        `📂 Spec files analizados: ${specFiles.length}`,
-        ...specFiles.map((f) => `  ${path.relative(process.cwd(), f)}`),
       ];
-      return textResult(lines.join('\n'));
+
+      if (coverage.businessRules.length > 0) {
+        outputLines.push('');
+        outputLines.push(`📌 Reglas de negocio: ${coverage.businessRules.length}`);
+        coverage.businessRules.forEach((rn) => {
+          const isCovered = allSpecsText.includes(rn.id.toLowerCase());
+          outputLines.push(`${isCovered ? '✅' : '❌'} ${rn.id}: ${rn.description}`);
+        });
+      }
+
+      if (coverage.nfrItems.length > 0) {
+        outputLines.push('');
+        outputLines.push(`⚙️  Requerimientos no funcionales: ${coverage.nfrItems.length}`);
+        coverage.nfrItems.forEach((nfr) => {
+          const isCovered = allSpecsText.includes(nfr.id.toLowerCase());
+          outputLines.push(`${isCovered ? '✅' : '❌'} ${nfr.id}: ${nfr.description}`);
+        });
+      }
+
+      outputLines.push('');
+      outputLines.push(`📂 Spec files analizados: ${specFiles.length}`);
+      specFiles.forEach((f) => outputLines.push(`  ${path.relative(process.cwd(), f)}`));
+
+      return textResult(outputLines.join('\n'));
+    }
+
+    case 'detect_gaps': {
+      const filePath = path.resolve(args.filePath);
+      if (!fs.existsSync(filePath)) {
+        return errorResult(`File not found: ${filePath}`);
+      }
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const gaps = analyzeGaps(content);
+      const rel = path.relative(process.cwd(), filePath);
+      const totalIssues =
+        gaps.openQuestions.length +
+        gaps.ambiguousTerms.length +
+        gaps.todoMarkers.length +
+        gaps.missingCriteria.length +
+        gaps.missingSections.length;
+
+      const gapOutputLines = [
+        `🔎 Análisis de gaps — ${rel}`,
+        `   Problemas detectados: ${totalIssues}`,
+        '',
+      ];
+      if (gaps.missingSections.length > 0) {
+        gapOutputLines.push(`📋 Secciones estándar ausentes (${gaps.missingSections.length}):`);
+        gaps.missingSections.forEach((s) => gapOutputLines.push(`   • ${s}`));
+        gapOutputLines.push('');
+      }
+      if (gaps.openQuestions.length > 0) {
+        gapOutputLines.push(`❓ Preguntas sin respuesta (${gaps.openQuestions.length}):`);
+        gaps.openQuestions.slice(0, 10).forEach((q) =>
+          gapOutputLines.push(`   • Línea ${q.line}: ${q.text.substring(0, 100)}`)
+        );
+        if (gaps.openQuestions.length > 10)
+          gapOutputLines.push(`   ... y ${gaps.openQuestions.length - 10} más`);
+        gapOutputLines.push('');
+      }
+      if (gaps.missingCriteria.length > 0) {
+        gapOutputLines.push(
+          `🎯 Requerimientos sin criterios de aceptación (${gaps.missingCriteria.length}):`
+        );
+        gaps.missingCriteria.forEach((item) =>
+          gapOutputLines.push(`   • ${item.id}: ${item.description.substring(0, 80)}`)
+        );
+        gapOutputLines.push('');
+      }
+      if (gaps.todoMarkers.length > 0) {
+        gapOutputLines.push(`⏳ Marcadores pendientes / TBD (${gaps.todoMarkers.length}):`);
+        gaps.todoMarkers.slice(0, 10).forEach((t) =>
+          gapOutputLines.push(`   • Línea ${t.line}: ${t.text.substring(0, 100)}`)
+        );
+        if (gaps.todoMarkers.length > 10)
+          gapOutputLines.push(`   ... y ${gaps.todoMarkers.length - 10} más`);
+        gapOutputLines.push('');
+      }
+      if (gaps.ambiguousTerms.length > 0) {
+        gapOutputLines.push(
+          `🔍 Términos ambiguos detectados (${gaps.ambiguousTerms.length} ocurrencias):`
+        );
+        gaps.ambiguousTerms.slice(0, 10).forEach((a) =>
+          gapOutputLines.push(`   • "${a.term}" en línea ${a.line}: ${a.text.substring(0, 80)}`)
+        );
+        if (gaps.ambiguousTerms.length > 10)
+          gapOutputLines.push(`   ... y ${gaps.ambiguousTerms.length - 10} más`);
+        gapOutputLines.push('');
+      }
+      if (totalIssues === 0) {
+        gapOutputLines.push(
+          '✅ No se detectaron gaps evidentes. El documento parece estar completo.'
+        );
+      }
+      return textResult(gapOutputLines.join('\n'));
+    }
+
+    case 'suggest_clarifications': {
+      const filePath = path.resolve(args.filePath);
+      if (!fs.existsSync(filePath)) {
+        return errorResult(`File not found: ${filePath}`);
+      }
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const gaps = analyzeGaps(content);
+      const questions = generateClarifications(gaps);
+      const rel = path.relative(process.cwd(), filePath);
+
+      if (questions.length === 0) {
+        return textResult(
+          `✅ No se encontraron gaps significativos en "${rel}".\n` +
+            'El documento parece estar suficientemente completo para generar especificaciones.'
+        );
+      }
+      const clarOutputLines = [
+        `💬 Preguntas de clarificación para: ${rel}`,
+        `   ${questions.length} pregunta(s) generada(s)`,
+        '',
+        ...questions.map((q, i) => `${i + 1}. ${q}`),
+        '',
+        'Responde estas preguntas para completar la especificación antes de generar los specs OpenSpec.',
+      ];
+      return textResult(clarOutputLines.join('\n'));
     }
 
     default:
@@ -329,341 +478,257 @@ function extractGivenWhenThen(section) {
 }
 
 /**
- * Checks CU and RN coverage of requirements against the combined spec text.
+ * Extracts labeled requirements of any type from a Markdown document.
+ * Supports formats: **CU1:**, **RN-1:**, ## 1.1 RNF1:, - US001: description, etc.
+ * @param {string} text
+ * @returns {{ id: string, description: string }[]}
+ */
+function extractLabeledItems(text) {
+  const items = [];
+  const seen = new Set();
+
+  const addItem = (id, description) => {
+    // Normalize only for deduplication; the original casing is preserved in the returned item.
+    const normId = id.toUpperCase().replace(/[-_]/g, '');
+    if (!seen.has(normId)) {
+      seen.add(normId);
+      items.push({
+        id: id.toUpperCase(),
+        description: description.trim().replace(/\*\*/g, '').replace(/\s*\([^)]*\)\s*/g, ' ').trim(),
+      });
+    }
+  };
+
+  // Pattern 1: **LABEL:** description — bold label with colon (most common in Spanish req docs)
+  // Handles: **CU1:**, **RN-1:**, **RNF1:**, **US001:**, **REQ-001:**
+  const boldColonPattern = /\*\*([A-Z]{1,5}[-_]?\d+(?:\.\d+)?):\*\*\s*([^\n*]+)/g;
+  let m;
+  while ((m = boldColonPattern.exec(text)) !== null) {
+    addItem(m[1], m[2]);
+  }
+
+  // Pattern 2: heading ## Nn.Nn LABEL: description or ### LABEL: description
+  // Handles: ## 1.1 RNF1: Autenticación, ### CU1: Solicitar hora
+  const headingPattern = /^#{1,4}\s+(?:\d+(?:\.\d+)*\s+)?([A-Z]{1,5}[-_]?\d+(?:\.\d+)?)[:\s]+([^\n#]+)/gm;
+  while ((m = headingPattern.exec(text)) !== null) {
+    if (m[1] && m[2].trim()) addItem(m[1], m[2]);
+  }
+
+  // Pattern 3: list item - **LABEL** or - **LABEL.** (bold label without inline colon)
+  const boldListPattern = /^[-*]\s+\*\*([A-Z]{1,5}[-_]?\d+(?:\.\d+)?)[.*]\*\*\s*([^\n]+)/gm;
+  while ((m = boldListPattern.exec(text)) !== null) {
+    addItem(m[1], m[2]);
+  }
+
+  return items;
+}
+
+/**
+ * Checks coverage of labeled requirements against combined spec text.
+ * Works with any labeled requirement format (CU, US, REQ, FR, RN, NFR, etc.).
  * @param {string} allSpecsText - lowercased concatenated text of all spec files
  * @param {string} requirements - requirements Markdown text
  * @param {string[]} specFiles - list of spec file paths
  */
 function checkCoverage(allSpecsText, requirements, specFiles) {
-  const useCases = [];
-  const cuPattern = /\*\*(CU\d+):\*\*\s*([^\n(*]+)/g;
-  const seenIds = new Set();
-  let m;
-  while ((m = cuPattern.exec(requirements)) !== null) {
-    if (!seenIds.has(m[1])) {
-      seenIds.add(m[1]);
-      useCases.push({ id: m[1], description: m[2].trim().replace(/\*\*/g, '') });
-    }
-  }
+  const allItems = extractLabeledItems(requirements);
 
-  const businessRules = [];
-  const rnPattern = /\*\*(RN\d+):\*\*\s*([^\n]+)/g;
-  const seenRns = new Set();
-  while ((m = rnPattern.exec(requirements)) !== null) {
-    if (!seenRns.has(m[1])) {
-      seenRns.add(m[1]);
-      businessRules.push({ id: m[1], description: m[2].trim().replace(/\*\*/g, '') });
-    }
-  }
+  const FUNC_PREFIXES = ['CU', 'US', 'UC', 'HU', 'FR', 'REQ', 'RF'];
+  const RULE_PREFIXES = ['RN', 'BR', 'CR', 'RC'];
+  const NFR_PREFIXES = ['RNF', 'NFR', 'QA', 'QR', 'NF'];
 
-  const covered = useCases
-    .filter((uc) => allSpecsText.includes(uc.id.toLowerCase()))
-    .map((uc) => uc.id);
-  const missing = useCases
-    .filter((uc) => !allSpecsText.includes(uc.id.toLowerCase()))
-    .map((uc) => uc.id);
+  const funcRequirements = allItems.filter((i) => FUNC_PREFIXES.some((p) => i.id.startsWith(p)));
+  const businessRules = allItems.filter((i) => RULE_PREFIXES.some((p) => i.id.startsWith(p)));
+  const nfrItems = allItems.filter((i) => NFR_PREFIXES.some((p) => i.id.startsWith(p)));
 
-  return { useCases, businessRules, covered, missing };
+  // Fall back to all items when no standard functional prefixes are detected
+  const requirementItems = funcRequirements.length > 0 ? funcRequirements : allItems;
+
+  const covered = requirementItems
+    .filter((item) => allSpecsText.includes(item.id.toLowerCase()))
+    .map((item) => item.id);
+  const missing = requirementItems
+    .filter((item) => !allSpecsText.includes(item.id.toLowerCase()))
+    .map((item) => item.id);
+
+  return { funcRequirements: requirementItems, businessRules, nfrItems, covered, missing };
 }
 
-// ─── Result builders ─────────────────────────────────────────────────────────
+// ─── Gap Analysis ─────────────────────────────────────────────────────────────
 
-function textResult(text) {
-  return { content: [{ type: 'text', text }] };
-}
+// Characters to scan forward when looking for acceptance criteria after a requirement ID.
+const CRITERIA_SEARCH_WINDOW = 2500;
 
-function errorResult(message) {
-  return { content: [{ type: 'text', text: message }], isError: true };
-}
+/** Vague/ambiguous terms to flag (bilingual, with and without accent marks). */
+const VAGUE_TERMS = [
+  'algunos', 'varias', 'varios', 'muchos', 'pocos', 'ciertos',
+  'rapido', 'rápido', 'rapidamente', 'rápidamente', 'lento', 'lentamente',
+  'facil', 'fácil', 'facilmente', 'fácilmente', 'dificil', 'difícil',
+  'apropiado', 'apropiada', 'adecuado', 'adecuada', 'conveniente', 'suficiente',
+  'cuando sea necesario', 'en la mayoria', 'en la mayoría', 'generalmente',
+  'normalmente', 'usualmente', 'tipicamente', 'típicamente', 'a veces', 'eventualmente',
+  'some', 'many', 'few', 'several', 'various',
+  'fast', 'quickly', 'slow', 'easy', 'difficult',
+  'appropriate', 'suitable', 'adequate',
+  'when necessary', 'in most cases', 'usually', 'typically', 'eventually',
+];
 
-// ─── Entry point ─────────────────────────────────────────────────────────────
+/** TODO/pending markers. */
+const TODO_PATTERNS = [
+  /\bTBD\b/i,
+  /\bTODO\b/i,
+  /\bpendiente\b/i,
+  /\bpor definir\b/i,
+  /\ba definir\b/i,
+  /\bpor determinar\b/i,
+];
 
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-
-main().catch((err) => {
-  console.error('MCP server error:', err);
-  process.exit(1);
-});
-
-const server = new Server(
-  { name: 'spec-runner-mcp', version: '1.0.0' },
-  { capabilities: { tools: {} } }
-);
-
-// ─── Tool definitions ────────────────────────────────────────────────────────
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: 'load_requirements',
-      description:
-        'Loads and returns the full content of a requirements Markdown document.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          filePath: {
-            type: 'string',
-            description: 'Absolute or relative path to the requirements Markdown file.',
-          },
-        },
-        required: ['filePath'],
-      },
-    },
-    {
-      name: 'validate_openapi_spec',
-      description:
-        'Validates an OpenAPI 3.x YAML or JSON spec file against the OpenAPI standard. ' +
-        'Returns a summary of valid endpoints and schemas, or detailed error messages.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          specPath: {
-            type: 'string',
-            description: 'Absolute or relative path to the OpenAPI spec file (.yaml or .json).',
-          },
-        },
-        required: ['specPath'],
-      },
-    },
-    {
-      name: 'list_acceptance_criteria',
-      description:
-        'Extracts and lists all Given/When/Then acceptance criteria from a requirements document.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          filePath: {
-            type: 'string',
-            description: 'Absolute or relative path to the requirements Markdown file.',
-          },
-        },
-        required: ['filePath'],
-      },
-    },
-    {
-      name: 'verify_spec_coverage',
-      description:
-        'Checks whether an OpenAPI spec covers all use cases (CU) and business rules (RN) ' +
-        'found in a requirements document. Returns covered and uncovered items.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          specPath: {
-            type: 'string',
-            description: 'Absolute or relative path to the OpenAPI spec file.',
-          },
-          requirementsPath: {
-            type: 'string',
-            description: 'Absolute or relative path to the requirements Markdown file.',
-          },
-        },
-        required: ['specPath', 'requirementsPath'],
-      },
-    },
-  ],
-}));
-
-// ─── Tool handlers ───────────────────────────────────────────────────────────
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  switch (name) {
-    case 'load_requirements': {
-      const filePath = path.resolve(args.filePath);
-      if (!fs.existsSync(filePath)) {
-        return errorResult(`File not found: ${filePath}`);
-      }
-      const content = fs.readFileSync(filePath, 'utf-8');
-      return textResult(content);
-    }
-
-    case 'validate_openapi_spec': {
-      const specPath = path.resolve(args.specPath);
-      if (!fs.existsSync(specPath)) {
-        return errorResult(`Spec file not found: ${specPath}`);
-      }
-      try {
-        const api = await SwaggerParser.validate(specPath);
-        const pathCount = Object.keys(api.paths || {}).length;
-        const schemaCount = Object.keys(
-          (api.components && api.components.schemas) || {}
-        ).length;
-        const tagNames = (api.tags || []).map((t) => t.name).join(', ');
-        const summary = [
-          `✅ Spec válida: ${api.info.title} v${api.info.version}`,
-          `   OpenAPI: ${api.openapi}`,
-          `   Endpoints (paths): ${pathCount}`,
-          `   Schemas: ${schemaCount}`,
-          `   Tags: ${tagNames || '(ninguno)'}`,
-        ].join('\n');
-        return textResult(summary);
-      } catch (err) {
-        return errorResult(`❌ Spec inválida:\n${err.message}`);
-      }
-    }
-
-    case 'list_acceptance_criteria': {
-      const filePath = path.resolve(args.filePath);
-      if (!fs.existsSync(filePath)) {
-        return errorResult(`File not found: ${filePath}`);
-      }
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const criteria = extractAcceptanceCriteria(content);
-      if (criteria.length === 0) {
-        return textResult('No se encontraron criterios de aceptación en el documento.');
-      }
-      const lines = criteria.map((c) => {
-        const casList = c.criteria
-          .map(
-            (ca) =>
-              `    ${ca.id}:\n` +
-              `      Given: ${ca.given}\n` +
-              `      When:  ${ca.when}\n` +
-              `      Then:  ${ca.then}`
-          )
-          .join('\n');
-        return `${c.useCase}:\n${casList}`;
-      });
-      return textResult(lines.join('\n\n'));
-    }
-
-    case 'verify_spec_coverage': {
-      const specPath = path.resolve(args.specPath);
-      const reqPath = path.resolve(args.requirementsPath);
-
-      if (!fs.existsSync(specPath)) {
-        return errorResult(`Spec file not found: ${specPath}`);
-      }
-      if (!fs.existsSync(reqPath)) {
-        return errorResult(`Requirements file not found: ${reqPath}`);
-      }
-
-      let spec;
-      try {
-        spec = yaml.load(fs.readFileSync(specPath, 'utf-8'));
-      } catch (err) {
-        return errorResult(`Failed to parse spec: ${err.message}`);
-      }
-      const requirements = fs.readFileSync(reqPath, 'utf-8');
-
-      const coverage = checkCoverage(spec, requirements);
-      const lines = [
-        `📋 Casos de uso en requerimientos: ${coverage.useCases.length}`,
-        `✅ Cubiertos por el spec: ${coverage.covered.length}`,
-        `❌ Sin cobertura detectada: ${coverage.missing.length}`,
-        '',
-        '── Detalle ──────────────────────────────────────',
-        ...coverage.useCases.map((uc) => {
-          const isCovered = coverage.covered.includes(uc.id);
-          return `${isCovered ? '✅' : '❌'} ${uc.id}: ${uc.description}`;
-        }),
-        '',
-        `📌 Reglas de negocio encontradas: ${coverage.businessRules.length}`,
-        ...coverage.businessRules.map((rn) => `  ${rn.id}: ${rn.description}`),
-        '',
-        `🛣  Endpoints en el spec: ${coverage.paths.length}`,
-        ...coverage.paths.map((p) => `  ${p}`),
-      ];
-      return textResult(lines.join('\n'));
-    }
-
-    default:
-      return errorResult(`Unknown tool: ${name}`);
-  }
-});
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+/** Standard sections expected in a requirements document. */
+const STANDARD_SECTIONS = [
+  { patterns: [/actores|usuarios.*actores|actors/i], name: 'Actores / Usuarios' },
+  { patterns: [/casos de uso|use cases/i], name: 'Casos de Uso' },
+  { patterns: [/reglas de negocio|business rules/i], name: 'Reglas de Negocio' },
+  { patterns: [/requerimientos no funcionales|non.?functional|nfr/i], name: 'Requerimientos No Funcionales' },
+  { patterns: [/criterios de aceptaci[oó]n|acceptance criteria/i], name: 'Criterios de Aceptación' },
+];
 
 /**
- * Extracts Given/When/Then acceptance criteria grouped by use case from a Markdown document.
+ * Analyzes a requirements document for gaps and ambiguities.
  * @param {string} content - Markdown text
- * @returns {{ useCase: string, criteria: { id: string, given: string, when: string, then: string }[] }[]}
+ * @returns {{ openQuestions, ambiguousTerms, todoMarkers, missingCriteria, missingSections }}
  */
-function extractAcceptanceCriteria(content) {
-  const result = [];
-  // Split by ### headings that look like use case sections (e.g., ### CU1: ...)
-  const sections = content.split(/\n(?=###\s+CU\d+)/);
+function analyzeGaps(content) {
+  const lines = content.split('\n');
+  const contentLower = content.toLowerCase();
 
-  for (const section of sections) {
-    const useCaseMatch = section.match(/###\s+(CU\d+[^(\n]*)/);
-    if (!useCaseMatch) continue;
+  const openQuestions = [];
+  const ambiguousTerms = [];
+  const todoMarkers = [];
+  const missingSections = [];
+  const missingCriteria = [];
 
-    const useCaseTitle = useCaseMatch[1].trim();
-    const criteria = [];
-
-    // Match CA blocks: - **CAn** followed by Given/When/Then
-    const caPattern =
-      /- \*\*(CA\d+)\*\*\s*\n\s+- \*\*Given:\*\*\s*([^\n]+)\n\s+- \*\*When:\*\*\s*([^\n]+)\n\s+- \*\*Then:\*\*\s*([^\n]+)/g;
-
-    let match;
-    while ((match = caPattern.exec(section)) !== null) {
-      criteria.push({
-        id: match[1],
-        given: match[2].trim(),
-        when: match[3].trim(),
-        then: match[4].trim(),
-      });
-    }
-
-    if (criteria.length > 0) {
-      result.push({ useCase: useCaseTitle, criteria });
+  // 1. Detect open/unanswered questions (bold question format: **¿...?**)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/\*\*¿[^?]+\?\*\*/.test(line)) {
+      let answered = false;
+      for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+        const next = lines[j].trim();
+        if (!next) continue;
+        if (/\*\*respuesta\*\*/i.test(next)) {
+          const resp = next.replace(/.*\*\*respuesta\*\*:?\s*/i, '').trim();
+          answered = resp.length > 3;
+        }
+        break;
+      }
+      if (!answered) {
+        openQuestions.push({ line: i + 1, text: line.trim() });
+      }
     }
   }
-  return result;
+
+  // 2. Detect ambiguous terms (use normalized lowercase content)
+  const seenTerms = new Set();
+  for (const term of VAGUE_TERMS) {
+    const termLower = term.toLowerCase();
+    const idx = contentLower.indexOf(termLower);
+    if (idx !== -1 && !seenTerms.has(term)) {
+      seenTerms.add(term);
+      const lineNum = content.substring(0, idx).split('\n').length;
+      const lineText = (lines[lineNum - 1] || '').trim();
+      if (!lineText.startsWith('```') && !lineText.startsWith('//') && !lineText.startsWith('    ')) {
+        ambiguousTerms.push({ line: lineNum, term, text: lineText });
+      }
+    }
+  }
+
+  // 3. Detect TODO/TBD markers
+  for (let i = 0; i < lines.length; i++) {
+    for (const pattern of TODO_PATTERNS) {
+      if (pattern.test(lines[i])) {
+        todoMarkers.push({ line: i + 1, text: lines[i].trim() });
+        break;
+      }
+    }
+  }
+
+  // 4. Detect missing standard sections
+  for (const section of STANDARD_SECTIONS) {
+    if (!section.patterns.some((p) => p.test(content))) {
+      missingSections.push(section.name);
+    }
+  }
+
+  // 5. Detect functional requirements without acceptance criteria
+  const funcItems = extractLabeledItems(content).filter((i) =>
+    /^(CU|US|UC|HU|FR|REQ)/i.test(i.id)
+  );
+  for (const item of funcItems) {
+    const idLower = item.id.toLowerCase();
+    const idIdx = contentLower.indexOf(idLower);
+    if (idIdx === -1) continue;
+    const snippet = contentLower.substring(idIdx, Math.min(idIdx + CRITERIA_SEARCH_WINDOW, contentLower.length));
+    const hasScenario = /\b(given|when|then|dado que|cuando|entonces)\b/i.test(snippet);
+    if (!hasScenario) {
+      missingCriteria.push({ id: item.id, description: item.description });
+    }
+  }
+
+  return { openQuestions, ambiguousTerms, todoMarkers, missingSections, missingCriteria };
 }
 
 /**
- * Checks coverage of use cases and business rules from requirements against an OpenAPI spec.
- * @param {object} spec - Parsed OpenAPI spec object
- * @param {string} requirements - Requirements Markdown text
- * @returns {{ useCases, businessRules, paths, covered, missing }}
+ * Generates specific, actionable clarification questions from gap analysis results.
+ * @param {object} gaps - result of analyzeGaps()
+ * @returns {string[]}
  */
-function checkCoverage(spec, requirements) {
-  // Extract use cases: **CU1:** description or - **CU1:** description
-  const useCases = [];
-  const cuPattern = /\*\*(CU\d+):\*\*\s*([^\n(*]+)/g;
-  const seenIds = new Set();
-  let m;
-  while ((m = cuPattern.exec(requirements)) !== null) {
-    if (!seenIds.has(m[1])) {
-      seenIds.add(m[1]);
-      useCases.push({ id: m[1], description: m[2].trim().replace(/\*\*/g, '') });
+function generateClarifications(gaps) {
+  const questions = [];
+
+  for (const section of gaps.missingSections) {
+    questions.push(
+      `📋 **Sección faltante — ${section}**: El documento no contiene esta sección. ` +
+        `¿Puede agregar la información de ${section} para completar la especificación?`
+    );
+  }
+
+  for (const q of gaps.openQuestions.slice(0, 10)) {
+    const text = q.text.replace(/\*\*/g, '').substring(0, 120);
+    questions.push(
+      `❓ **Pregunta sin respuesta (línea ${q.line})**: "${text}" — ` +
+        'Por favor, proporcione una respuesta concreta.'
+    );
+  }
+
+  for (const item of gaps.missingCriteria.slice(0, 15)) {
+    questions.push(
+      `🎯 **Criterios de aceptación faltantes — ${item.id}** ("${item.description.substring(0, 60)}"): ` +
+        'No se encontraron escenarios Given/When/Then. ' +
+        '¿Cuándo se considera correctamente implementado? ' +
+        'Ejemplo: "Dado que [precondición], Cuando [acción], Entonces [resultado esperado]".'
+    );
+  }
+
+  const seenTerms = new Set();
+  for (const a of gaps.ambiguousTerms.slice(0, 8)) {
+    if (!seenTerms.has(a.term)) {
+      seenTerms.add(a.term);
+      questions.push(
+        `🔍 **Término ambiguo — "${a.term}"** (línea ${a.line}): ` +
+          `"${a.text.substring(0, 100)}" — ` +
+          '¿Puede reemplazar este término por un valor concreto, rango o condición medible?'
+      );
     }
   }
 
-  // Extract business rules: **RN1:** description
-  const businessRules = [];
-  const rnPattern = /\*\*(RN\d+):\*\*\s*([^\n]+)/g;
-  const seenRns = new Set();
-  while ((m = rnPattern.exec(requirements)) !== null) {
-    if (!seenRns.has(m[1])) {
-      seenRns.add(m[1]);
-      businessRules.push({ id: m[1], description: m[2].trim().replace(/\*\*/g, '') });
-    }
+  for (const t of gaps.todoMarkers.slice(0, 5)) {
+    questions.push(
+      `⏳ **Elemento pendiente (línea ${t.line})**: "${t.text.substring(0, 120)}" — ` +
+        '¿Cuál es la definición para este elemento?'
+    );
   }
 
-  const paths = Object.keys(spec.paths || {});
-
-  // Build a searchable string from all spec descriptions and summaries
-  const specText = JSON.stringify(spec).toLowerCase();
-
-  const covered = [];
-  const missing = [];
-
-  for (const uc of useCases) {
-    // A use case is considered covered if its ID (e.g. "CU1") appears in the spec text
-    if (specText.includes(uc.id.toLowerCase())) {
-      covered.push(uc.id);
-    } else {
-      missing.push(uc.id);
-    }
-  }
-
-  return { useCases, businessRules, paths, covered, missing };
+  return questions;
 }
 
 // ─── Result builders ─────────────────────────────────────────────────────────
