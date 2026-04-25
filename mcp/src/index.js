@@ -488,6 +488,7 @@ function extractLabeledItems(text) {
   const seen = new Set();
 
   const addItem = (id, description) => {
+    // Normalize only for deduplication; the original casing is preserved in the returned item.
     const normId = id.toUpperCase().replace(/[-_]/g, '');
     if (!seen.has(normId)) {
       seen.add(normId);
@@ -555,14 +556,17 @@ function checkCoverage(allSpecsText, requirements, specFiles) {
 
 // ─── Gap Analysis ─────────────────────────────────────────────────────────────
 
-/** Vague/ambiguous terms to flag (bilingual). */
+// Characters to scan forward when looking for acceptance criteria after a requirement ID.
+const CRITERIA_SEARCH_WINDOW = 2500;
+
+/** Vague/ambiguous terms to flag (bilingual, with and without accent marks). */
 const VAGUE_TERMS = [
   'algunos', 'varias', 'varios', 'muchos', 'pocos', 'ciertos',
-  'rapido', 'rapidamente', 'lento', 'lentamente',
-  'facil', 'facilmente', 'dificil',
+  'rapido', 'rápido', 'rapidamente', 'rápidamente', 'lento', 'lentamente',
+  'facil', 'fácil', 'facilmente', 'fácilmente', 'dificil', 'difícil',
   'apropiado', 'apropiada', 'adecuado', 'adecuada', 'conveniente', 'suficiente',
-  'cuando sea necesario', 'en la mayoria', 'generalmente',
-  'normalmente', 'usualmente', 'tipicamente', 'a veces', 'eventualmente',
+  'cuando sea necesario', 'en la mayoria', 'en la mayoría', 'generalmente',
+  'normalmente', 'usualmente', 'tipicamente', 'típicamente', 'a veces', 'eventualmente',
   'some', 'many', 'few', 'several', 'various',
   'fast', 'quickly', 'slow', 'easy', 'difficult',
   'appropriate', 'suitable', 'adequate',
@@ -663,7 +667,7 @@ function analyzeGaps(content) {
     const idLower = item.id.toLowerCase();
     const idIdx = contentLower.indexOf(idLower);
     if (idIdx === -1) continue;
-    const snippet = contentLower.substring(idIdx, Math.min(idIdx + 2500, contentLower.length));
+    const snippet = contentLower.substring(idIdx, Math.min(idIdx + CRITERIA_SEARCH_WINDOW, contentLower.length));
     const hasScenario = /\b(given|when|then|dado que|cuando|entonces)\b/i.test(snippet);
     if (!hasScenario) {
       missingCriteria.push({ id: item.id, description: item.description });
