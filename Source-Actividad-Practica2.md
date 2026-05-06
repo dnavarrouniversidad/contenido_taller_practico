@@ -6,26 +6,26 @@
 curso para obtener ejemplos de requerimientos no funcionales comunes.
 
 
-
 **NOTA** Un requerimiento no funcional es una especificación que describe las propiedades, restricciones o atributos de calidad que debe cumplir un sistema, definiendo cómo debe comportarse en lugar de qué funcionalidades debe ofrecer.
 
 Características clave
-	-	No describen funcionalidades específicas, sino condiciones de operación.
-	-	Aplican de forma transversal a múltiples o todos los casos de uso.
-	-	Son medibles o verificables (idealmente).
-	-	Impactan directamente en el diseño arquitectónico.
+    -   No describen funcionalidades específicas, sino condiciones de operación.
+    -   Aplican de forma transversal a múltiples o todos los casos de uso.
+    -   Son medibles o verificables (idealmente).
+    -   Impactan directamente en el diseño arquitectónico.
 
 Ejemplos de atributos de calidad
-	-	Seguridad
-	-	Rendimiento
-	-	Disponibilidad
-	-	Usabilidad
-	-	Escalabilidad
-	-	Mantenibilidad
+    -   Seguridad
+    -   Rendimiento
+    -   Disponibilidad
+    -   Usabilidad
+    -   Escalabilidad
+    -   Mantenibilidad Interoperabilidad
+  
 
 Diferencia con requerimientos funcionales
-	-	Funcional: qué hace el sistema (ej. agendar una cita).
-	-	No funcional: cómo debe hacerlo (ej. en menos de 100 ms, con autenticación, disponible 99,5%).
+    -   Funcional: qué hace el sistema (ej. agendar una cita).
+    -   No funcional: cómo debe hacerlo (ej. en menos de 100 ms, con autenticación, disponible 99,5%).
 
 
 ## 1.1 RNF1: Autenticación y autorización
@@ -70,6 +70,7 @@ Este requerimiento asegura la continuidad operativa del sistema, evitando interr
 - Infraestructura confiable.
 - Monitoreo del sistema.
 - Estrategias de recuperación ante fallos.
+- https://www.dotcom-monitor.com/es/calculadora-de-disponibilidad/
 
 ---
 
@@ -85,6 +86,7 @@ Influye directamente en la experiencia de usuario, permitiendo una interacción 
 - Optimización de consultas a base de datos.
 - Uso de índices y posibles mecanismos de caché.
 - Diseño eficiente de APIs.
+- https://bytebytego.com/guides/what-are-the-top-caching-strategies/
 
 ---
 
@@ -184,7 +186,7 @@ Ejemplos desde Requerimientos y Restricciones:
 - No -> pasar a 4 
 
 Explicación: 
-El sistema posee reglas de negocio estrictas, por ejemplo, evitar dobles reservas, impedir estados contradictorios en una cita y controlar registros duplicados de pacientes. Estas reglas requieren que ciertas validaciones se resuelvan de manera inmediata y consistente en la misma operación. Cuando la consistencia fuerte es un requisito importante, la arquitectura en capas suele ser más adecuada que microservicios, porque evita la complejidad adicional de coordinar múltiples servicios distribuidos y manejar consistencia eventual.
+El sistema posee reglas de negocio estrictas, por ejemplo, evitar dobles reservas, impedir estados contradictorios en una cita y controlar registros duplicados de pacientes. Estas reglas requieren que ciertas validaciones se resuelvan de manera inmediata y consistente en la misma operación. Cuando la consistencia fuerte es un requisito importante, la arquitectura en capas suele ser más adecuada que microservicios, porque evita la complejidad adicional de coordinar múltiples servicios distribuidos y manejar consistencia eventual. Para Microservicios, si buscamos garantizar consistencia transaccional, debemos pensar en incorporar patrones como SAGA: https://medium.com/javarevisited/difference-between-saga-and-cqrs-design-patterns-in-microservices-acd1729a6b02
 
 
 ### 4. ¿El sistema necesita escalar de manera muy diferente por módulos independientes?
